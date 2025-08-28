@@ -1,0 +1,163 @@
+name: 🚀 编译 (Build)
+
+on:
+  workflow_dispatch:
+    inputs:
+      owner:
+        description: 'openwrt 仓库的拥有者 (Owner of openwrt repo)'
+        type: string
+        required: true
+        default: 'openwrt'
+      repo:
+        description: 'openwrt 仓库的名字 (Name of openwrt repo)'
+        type: string
+        required: true
+        default: 'openwrt'
+      branch:
+        description: 'openwrt 仓库的分支 (Branch of openwrt repo)'
+        type: string
+        required: true
+        default: 'main'
+      multithreading:
+        description: '开启多线程编译 (Enable multithreading build)'
+        type: boolean
+        default: true
+      ssh:
+        description: '使用 ssh 连接到编译环境 (Connect to the build environment using ssh)'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    if: ${{inputs.ssh == false}}
+    runs-on: ubuntu-latest
+    name: 🚀 编译 (Build)
+    steps:
+
+      - name: 检查服务器配置
+        run: |
+          echo "已知CPU型号（降序）：7763,8370C,8272CL,8171M,E5系列"
+          echo "--------------------------CPU信息--------------------------"
+          echo "CPU物理数量:$(cat /proc/cpuinfo| grep "physical id"| sort| uniq| wc -l)"
+          echo -e "CPU核心及版本信息：$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
+          echo "--------------------------硬盘信息--------------------------"
+          echo -e "$(df -hT)"
+      - name: 清理系统
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: 下载编译所需的依赖 (Install the software packages required for compilation)
+        run: |
+          sudo apt update
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+
+      - name: 克隆当前仓库 (Clone current repo)
+        uses: actions/checkout@v4
+
+      - name: 克隆 openwrt 仓库 (Clone openwrt repo)
+        uses: actions/checkout@v4
+        with:
+          repository: '${{inputs.owner}}/${{inputs.repo}}'
+          ref: ${{inputs.branch}}
+          path: openwrt
+
+      - name: 复制当前仓库的配置文件到 openwrt 仓库  (Copy current repo config to openwrt repo)
+        run: cp -f .config feeds.conf.default diy.sh openwrt/
+
+      - name: 运行 diy.sh (Run diy.sh)
+        working-directory: openwrt
+        run: |
+          chmod +x diy.sh
+          ./diy.sh
+
+      - name: 更新并下载 feeds (Update and download feeds)
+        working-directory: openwrt
+        run: ./scripts/feeds update -a && ./scripts/feeds install -a
+
+      - name: 再次复制当前仓库的配置文件到 openwrt 仓库 (Copy current repo config to openwrt repo again)
+        run: cp -f .config feeds.conf.default diy.sh openwrt/
+
+      - name: 编译前上传配置 (Upload config before build)
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-before-build
+          path: |
+            openwrt/feeds.conf.default
+            openwrt/.config
+
+      - name: 多线程编译 openwrt (Build openwrt multithreading)
+        if: ${{inputs.multithreading == true}}
+        working-directory: openwrt
+        run: make -j$(nproc)
+
+      - name: 单线程编译 openwrt (Build openwrt single thread)
+        if: ${{inputs.multithreading == false}}
+        working-directory: openwrt
+        run: make -j1 V=s
+
+      - name: 上传编译结果到 Artifact (Upload build result to Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-build-result
+          path: openwrt/bin/targets
+
+  build-ssh:
+    if: ${{inputs.ssh == true}}
+    name: 🚀 编译 (Build) - SSH
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载编译所需的依赖 (Install the software packages required for compilation)
+        run: |
+          sudo apt update
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+
+      - name: 克隆当前仓库 (Clone current repo)
+        uses: actions/checkout@v4
+
+      - name: 克隆 openwrt 仓库 (Clone openwrt repo)
+        uses: actions/checkout@v4
+        with:
+          repository: '${{inputs.owner}}/${{inputs.repo}}'
+          ref: ${{inputs.branch}}
+          path: openwrt
+
+      - name: 开启 SSH 服务 (Start SSH service)
+        uses: lhotari/action-upterm@v1
+        with:
+          wait-timeout-minutes: 20
+
+#      # 你也可以使用这个，个人觉得它更好用 (You can use this, I personally think it is better)
+#      - name: 开启 SSH 服务 (Start SSH service)
+#        uses: mxschmitt/action-tmate@v3
+#        timeout-minutes: 15
+
+      - name: 编译前上传配置 (Upload config before build)
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-before-build
+          path: |
+            openwrt/feeds.conf.default
+            openwrt/.config
+
+      - name: 多线程编译 openwrt (Build openwrt multithreading)
+        if: ${{inputs.multithreading == true}}
+        working-directory: openwrt
+        run: make -j$(nproc) V=s
+
+      - name: 单线程编译 openwrt (Build openwrt single thread)
+        if: ${{inputs.multithreading == false}}
+        working-directory: openwrt
+        run: make -j1 V=s
+
+      - name: 上传编译结果到 Artifact (Upload build result to Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-build-result
+          path: openwrt/bin/targets
