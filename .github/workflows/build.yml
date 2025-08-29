@@ -30,7 +30,7 @@ on:
 jobs:
   build:
     if: ${{inputs.ssh == false}}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-large
     name: 🚀 编译 (Build)
     steps:
 
